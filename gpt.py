@@ -108,6 +108,23 @@ class GPT(nn.Module):
         ))
         self.lm_head = nn.Linear(self.config.n_embed, self.config.vocab_size, bias=False)
 
+    def forward(self, idx, targets=None):
+        B, T = idx.size()
+        assert T <= self.config.context_len, f"Input exceeds the maximum context length of the model"
+        pos = torch.arange(0, T, dtype=torch.long, device=idx.device)
+        pos_embed = self.transformer.wpe(pos)   # (T, n_embed)
+        tok_embed = self.transformer.wte(idx)   # (B, T, n_embed)
+        x = pos_embed + tok_embed
+        # pass through transformer layers
+        for block in self.transformer.h:
+            x = block(x)
+        # final layernorm (different from original transformer)
+        x = self.transformer.ln_f(x)
+        # final classifier layer
+        logits = self.lm_head(x)    # (B, T, vocab_size)
+        loss = None if targets is None else F.cross_entropy(logits.view(-1, self.config.vocab_size), targets.view(-1))
+        return logits, loss
+
     @classmethod
     def from_pretrained(cls, model_type):
         """Loads pretrained GPT-2 model weights from huggingface
@@ -160,14 +177,13 @@ class GPT(nn.Module):
                     sd[k].copy_(sd_hf[k])
 
         return model
-    
+
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
-    # CONFIG_PATH = 'config.yaml'
-    # config = yaml.safe_load(open(CONFIG_PATH, 'r'))
-    # gpt = GPT(GPTConfig(**config))
-    # logging.info('GPT2 model initialized successfully using YAML file!')
+    CONFIG_PATH = 'config.yaml'
+    config = yaml.safe_load(open(CONFIG_PATH, 'r'))
+    gpt = GPT(GPTConfig(**config))
+    logging.info('GPT2 model initialized successfully using YAML file!')
 
-    gpt = GPT.from_pretrained('gpt2')
-    logging.info('GPT2 model weights loaded successfully from HF!')
-    
+    # gpt = GPT.from_pretrained('gpt2')
+    # logging.info('GPT2 model weights loaded successfully from HF!')

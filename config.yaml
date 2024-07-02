@@ -4,6 +4,7 @@ n_embed: 768
 vocab_size: 50257
 n_layer: 12
 n_head: 12
+init_linear_std: 0.02
 
 ## Learning hyperparameters
 batch_size: 4

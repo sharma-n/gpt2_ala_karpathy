@@ -42,7 +42,7 @@ class ShakespeareDataset(Dataset):
         self.tokens = get_tiny_shakespeare()
         if not len(self.tokens)%T:
             self.tokens = self.token[:-(len(self.tokens)%T)]    #remove the "left-over" tokens
-        logging.info(f'[DATALOADER  ] The dataset has {self.tokens.size()} tokens and {len(self)} samples')
+        logging.info(f'[DATALOADER  ] The dataset has {self.tokens.size(0)} tokens and {len(self)} samples')
 
     def __len__(self):
         return len(self.tokens)//self.T

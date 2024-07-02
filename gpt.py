@@ -15,6 +15,7 @@ class CausalSelfAttention(nn.Module):
         assert config.n_embed % config.n_head == 0
         self.c_attn = nn.Linear(config.n_embed, 3*config.n_embed) # build qkv as a single linear layer, split it in forward
         self.c_proj = nn.Linear(config.n_embed, config.n_embed)
+        self.c_proj.NORMALIZE_RESIDUAL_GRADIENT_HACK = 1
         self.n_head, self.n_embed = config.n_head, config.n_embed
         # called 'bias' in OpenAI/HF naming convention, but essentially the mask. It is a registered buffer because it's not a trainable tensor.
         self.register_buffer('bias', torch.tril(torch.ones(config.context_len, config.context_len))
@@ -46,6 +47,7 @@ class MLP(nn.Module):
         self.c_fc = nn.Linear(config.n_embed, 4 * config.n_embed)
         self.gelu = nn.GELU() #gelu is better because it doesn't go to exactly zero  on the left side.
         self.c_proj = nn.Linear(4 * config.n_embed, config.n_embed)
+        self.c_proj.NORMALIZE_RESIDUAL_GRADIENT_HACK = 1
 
     def forward(self, x):
         x = self.c_fc(x)
@@ -79,6 +81,7 @@ class GPTConfig:
     vocab_size: int = 50257
     n_layer: int = 12
     n_head: int = 12
+    init_linear_std: float = 0.02
 
     def __init__(self, **kwargs):
         names = set([f.name for f in fields(self)])
@@ -108,6 +111,18 @@ class GPT(nn.Module):
         ))
         self.lm_head = nn.Linear(self.config.n_embed, self.config.vocab_size, bias=False)
         self.transformer.wte.weight = self.lm_head.weight   # weight sharing scheme!
+        self.apply(self._init_weights)  # init params
+
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            std = self.config.init_linear_std
+            if hasattr(module, 'NORMALIZE_RESIDUAL_GRADIENT_HACK'):
+                std = (2*self.config.n_layer) ** -0.5
+            torch.nn.init.normal_(module.weight, mean=0.0, std=std)
+            if module.bias is not None:
+                torch.nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=self.config.init_linear_std)
 
     def forward(self, idx, targets=None):
         B, T = idx.size()

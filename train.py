@@ -1,10 +1,15 @@
+import torch.utils
+import torch.utils.data
 import yaml
 import torch
+from torch.utils.data import DataLoader
 import tiktoken
 import logging
 from dataclasses import dataclass, fields
 from gpt import GPT, GPTConfig
-from dataset import get_tiny_shakespeare
+from dataset import ShakespeareDataset
+
+logging.basicConfig(level=logging.INFO)
 
 def get_device_type():
     """
@@ -19,6 +24,7 @@ def get_device_type():
     else:
         logging.info('Using device: cpu')
         return "cpu"
+DEVICE = get_device_type()
 
 def sample(model: GPT, prompt: str, reps: int = 5, max_total_tokens: int = 30, topk: int =50):
     '''
@@ -35,7 +41,7 @@ def sample(model: GPT, prompt: str, reps: int = 5, max_total_tokens: int = 30, t
     enc = tiktoken.get_encoding('gpt2')
     tokens = torch.tensor(enc.encode(prompt), dtype=torch.long)
     tokens = tokens.unsqueeze(0).repeat(reps, 1)    # (reps, len(prompt))
-    x = tokens.to(get_device_type())
+    x = tokens.to(DEVICE)
 
     while x.size(1) < max_total_tokens:
         with torch.no_grad():
@@ -70,16 +76,20 @@ class TrainConfig:
             if k in names:
                 setattr(self, k, v)
 
-def train(model: GPT, config: TrainConfig, x, y):
+def train(model: GPT, data: torch.utils.data.Dataset, config: TrainConfig):
     '''
     Train a GPT model on given data.
 
     args:
         model (GPT): GPT model to train
+        dataloader (torch.utils.data.Dataset): Torch data
         config (TrainConfig): Training config
     '''
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate)
-    for i in range(config.steps):
+    dataloader = DataLoader(data, batch_size=config.batch_size, shuffle=True)
+    for i, data in enumerate(dataloader):
+        x, y = data
+        x, y = x.to(DEVICE), y.to(DEVICE)
         optimizer.zero_grad()   # always remember to zero the grads at the start! because loss.backwards is an accumulation.
         logits, loss = model(x, y)
         loss.backward()
@@ -87,21 +97,15 @@ def train(model: GPT, config: TrainConfig, x, y):
         logging.info(f'step {i}: loss = {loss.item()}')
 
 if __name__ == '__main__':
-    logging.basicConfig(level=logging.INFO)
     CONFIG_PATH = 'config.yaml'
     config = yaml.safe_load(open(CONFIG_PATH, 'r'))
     torch.manual_seed(42)
     torch.cuda.manual_seed(42)
-    device = get_device_type()
 
     gpt = GPT(GPTConfig(**config))
     logging.info('GPT2 model initialized successfully using YAML file!')
-    gpt.to(device)
+    gpt.to(DEVICE)
     # print('\n> '.join(gpt.sample("Hello, I'm a language model")))
 
-    B, T = 4, 32
-    tokens = get_tiny_shakespeare()
-    buf = torch.tensor(tokens[:B*T+1]).to(device)
-    x = buf[:-1].view(B, T)
-    y = buf[1:].view(B, T)
-    train(gpt, TrainConfig(**config), x, y)
+    data = ShakespeareDataset(config['context_len'])
+    train(gpt, data, TrainConfig(**config))

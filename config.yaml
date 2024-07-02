@@ -1,12 +1,12 @@
 ## model hyperparameters
-context_len: 1024  # called block_size in the video
+context_len: 32  # called block_size in the video
 n_embed: 768
 vocab_size: 50257
 n_layer: 12
 n_head: 12
 
 ## Learning hyperparameters
-batch_size: 64
+batch_size: 4
 steps: 50
 eval_interval: 500
 eval_iters: 200

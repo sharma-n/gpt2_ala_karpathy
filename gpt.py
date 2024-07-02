@@ -1,9 +1,10 @@
+import inspect
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
 import yaml
 import logging
-from utils import GPTConfig
+from utils import GPTConfig, TrainConfig, DEVICE
 
 class CausalSelfAttention(nn.Module):
     '''
@@ -127,6 +128,32 @@ class GPT(nn.Module):
         logits = self.lm_head(x)    # (B, T, vocab_size)
         loss = None if targets is None else F.cross_entropy(logits.view(-1, self.config.vocab_size), targets.view(-1))
         return logits, loss
+
+    def configure_optimizers(self, train_config: TrainConfig):
+        '''
+        Setup the optimizer to have weight decay
+        '''
+         # start with all of the candidate parameters (that require grad)
+        param_dict = {pn: p for pn, p in self.named_parameters()}
+        param_dict = {pn: p for pn, p in param_dict.items() if p.requires_grad}
+        # create optim groups. Any parameters that is 2D will be weight decayed, otherwise no.
+        # i.e. all weight tensors in matmuls + embeddings decay, all biases and layernorms don't.
+        decay_params = [p for n, p in param_dict.items() if p.dim() >= 2]
+        nodecay_params = [p for n, p in param_dict.items() if p.dim() < 2]
+        optim_groups = [
+            {'params': decay_params, 'weight_decay': train_config.weight_decay},
+            {'params': nodecay_params, 'weight_decay': 0.0}
+        ]
+        num_decay_params = sum(p.numel() for p in decay_params)
+        num_nodecay_params = sum(p.numel() for p in nodecay_params)
+        print(f"num decayed parameter tensors: {len(decay_params)}, with {num_decay_params:,} parameters")
+        print(f"num non-decayed parameter tensors: {len(nodecay_params)}, with {num_nodecay_params:,} parameters")
+        # Create AdamW optimizer and use the fused version if it is available
+        fused_available = 'fused' in inspect.signature(torch.optim.AdamW).parameters
+        use_fused = fused_available and DEVICE == "cuda"
+        print(f"using fused AdamW: {use_fused}")
+        optimizer = torch.optim.AdamW(optim_groups, lr=train_config.learning_rate, betas=tuple(train_config.adam_betas), eps=train_config.adam_eps, fused=use_fused)
+        return optimizer
 
     @classmethod
     def from_pretrained(cls, model_type):

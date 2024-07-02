@@ -9,7 +9,7 @@ logging.basicConfig(level=logging.INFO)
 
 from gpt import GPT
 from dataset import ShakespeareDataset
-from utils import DEVICE, TrainConfig, GPTConfig
+from utils import DEVICE, TrainConfig, GPTConfig, cosine_lr_scheduler
 
 
 def train(model: GPT, data: torch.utils.data.Dataset, config: TrainConfig):
@@ -21,9 +21,9 @@ def train(model: GPT, data: torch.utils.data.Dataset, config: TrainConfig):
         dataloader (torch.utils.data.Dataset): Torch data
         config (TrainConfig): Training config
     '''
-    optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate)
+    optimizer = model.configure_optimizers(config)
     dataloader = DataLoader(data, batch_size=config.batch_size, shuffle=True)
-    for i, data in enumerate(dataloader):
+    for step, data in enumerate(dataloader):
         t0 = time()
         x, y = data
         x, y = x.to(DEVICE), y.to(DEVICE)
@@ -31,14 +31,18 @@ def train(model: GPT, data: torch.utils.data.Dataset, config: TrainConfig):
         with torch.autocast(device_type=DEVICE, dtype=torch.bfloat16):
             logits, loss = model(x, y)
         loss.backward()
+        norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)  # gradient clipping!
+        lr = cosine_lr_scheduler(step, config)
+        for param_group in optimizer.param_groups:
+            param_group['lr'] = lr
         optimizer.step()
         torch.cuda.synchronize()
         t1 = time()
         tokens_per_sec = (model.config.context_len*config.batch_size) / (t1-t0)
         if USE_WANDB:
-            wandb.log({'loss': loss.item(), 'tok/sec': tokens_per_sec})
+            wandb.log({'loss': loss.item(), 'norm': norm ,'tok/sec': tokens_per_sec, 'lr': lr})
         else:
-            logging.info(f'step {i}: loss = {loss.item()}, tok/sec = {tokens_per_sec:.2f}')
+            logging.info(f'step {step}: loss = {loss.item()}, norm = {norm:.4f}, tok/sec = {tokens_per_sec:.2f}, lr = {lr:.5f}')
 
 USE_WANDB = False
 if __name__ == '__main__':

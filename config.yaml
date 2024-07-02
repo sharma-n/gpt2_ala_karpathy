@@ -1,15 +1,18 @@
 ## model hyperparameters
-context_len: 32  # called block_size in the video
+context_len: 1024  # called block_size in the video
 n_embed: 768
-vocab_size: 50257
+vocab_size: 50304
 n_layer: 12
 n_head: 12
 init_linear_std: 0.02
 
 ## Learning hyperparameters
-batch_size: 4
+batch_size: 8
 steps: 50
 eval_interval: 500
 eval_iters: 200
 learning_rate: 3.0e-4
 dropout: 0.2
+
+## Other Config
+use_wandb: False

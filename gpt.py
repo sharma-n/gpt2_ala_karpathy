@@ -2,9 +2,8 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 import yaml
-from dataclasses import dataclass, fields
-import math
 import logging
+from utils import GPTConfig
 
 class CausalSelfAttention(nn.Module):
     '''
@@ -18,8 +17,8 @@ class CausalSelfAttention(nn.Module):
         self.c_proj.NORMALIZE_RESIDUAL_GRADIENT_HACK = 1
         self.n_head, self.n_embed = config.n_head, config.n_embed
         # called 'bias' in OpenAI/HF naming convention, but essentially the mask. It is a registered buffer because it's not a trainable tensor.
-        self.register_buffer('bias', torch.tril(torch.ones(config.context_len, config.context_len))
-                                     .view(1, 1, config.context_len, config.context_len))
+        # self.register_buffer('bias', torch.tril(torch.ones(config.context_len, config.context_len))
+        #                              .view(1, 1, config.context_len, config.context_len))
 
     def forward(self, x):
         B, T, C = x.size()  # batch size, seq length, n_embed
@@ -29,11 +28,14 @@ class CausalSelfAttention(nn.Module):
         k = k.view(B, T, self.n_head, C//self.n_head).transpose(1, 2)   # (B, nh, T, hs)
         q = q.view(B, T, self.n_head, C//self.n_head).transpose(1, 2)   # (B, nh, T, hs)
         v = v.view(B, T, self.n_head, C//self.n_head).transpose(1, 2)   # (B, nh, T, hs)
+        
         # attention (materializes the large (T,T) matrix for all queries and keys)
-        att = (q @ k.transpose(-2,-1)) * (1.0 / math.sqrt(k.size(-1)))
-        att = att.masked_fill(self.bias[:,:,:T,:T]==0, float('-inf'))   # auto-regressive mask
-        att = F.softmax(att, dim=-1)
-        y = att @ v # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs), essentially a "weighted sum" of the values
+        # att = (q @ k.transpose(-2,-1)) * (1.0 / math.sqrt(k.size(-1)))
+        # att = att.masked_fill(self.bias[:,:,:T,:T]==0, float('-inf'))   # auto-regressive mask
+        # att = F.softmax(att, dim=-1)
+        # y = att @ v # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs), essentially a "weighted sum" of the values
+        y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+
         y = y.transpose(1,2).contiguous().view(B,T,C)   # brings the different computations for each head back together
         y = self.c_proj(y)
         return y
@@ -73,21 +75,6 @@ class TransformerBlock(nn.Module):
         x = x + self.attn(self.ln_1(x))     # reduce
         x = x + self.mlp(self.ln_2(x))      # map
         return x
-
-@dataclass
-class GPTConfig:
-    context_len: int = 1024  # called block_size in the video
-    n_embed: int = 768
-    vocab_size: int = 50257
-    n_layer: int = 12
-    n_head: int = 12
-    init_linear_std: float = 0.02
-
-    def __init__(self, **kwargs):
-        names = set([f.name for f in fields(self)])
-        for k, v in kwargs.items():
-            if k in names:
-                setattr(self, k, v)
 
 class GPT(nn.Module):
     '''

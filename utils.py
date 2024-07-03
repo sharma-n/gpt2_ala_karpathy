@@ -58,7 +58,7 @@ def sample(model, prompt: str, reps: int = 5, max_total_tokens: int = 30, topk: 
 class TrainConfig:
     batch_size: int = 524288
     minibatch_size: int = 8
-    steps: int = 5000
+    epochs: int = 10
     eval_interval: int = 500
     eval_iters: int = 200
     learning_rate: float = 3e-4

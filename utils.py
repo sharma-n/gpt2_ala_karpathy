@@ -1,6 +1,7 @@
 import torch
 import torch.nn.functional as F
 import logging
+logger = logging.getLogger(__name__)
 import tiktoken
 import math
 from dataclasses import dataclass, fields, field
@@ -10,15 +11,14 @@ def get_device_type():
     Returns the device type (CUDA or MPS) if available, otherwise returns "cpu"
     """
     if torch.cuda.is_available():
-        logging.info('[UTILS\t] Using device: cuda')
+        logger.info('[UTILS\t] Using device: cuda')
         return "cuda"
     elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
-        logging.info('[UTILS\t] Using device: mps')
+        logger.info('[UTILS\t] Using device: mps')
         return "mps"
     else:
-        logging.info('[UTILS\t] Using device: cpu')
+        logger.info('[UTILS\t] Using device: cpu')
         return "cpu"
-DEVICE = get_device_type()
 
 def sample(model, prompt: str, reps: int = 5, max_total_tokens: int = 30, topk: int =50):
     '''
@@ -35,7 +35,6 @@ def sample(model, prompt: str, reps: int = 5, max_total_tokens: int = 30, topk: 
     enc = tiktoken.get_encoding('gpt2')
     tokens = torch.tensor(enc.encode(prompt), dtype=torch.long)
     tokens = tokens.unsqueeze(0).repeat(reps, 1)    # (reps, len(prompt))
-    x = tokens.to(DEVICE)
 
     while x.size(1) < max_total_tokens:
         with torch.no_grad():

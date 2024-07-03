@@ -4,7 +4,8 @@ import torch.nn as nn
 from torch.nn import functional as F
 import yaml
 import logging
-from utils import GPTConfig, TrainConfig, DEVICE
+logger = logging.getLogger(__name__)
+from utils import GPTConfig, TrainConfig
 
 class CausalSelfAttention(nn.Module):
     '''
@@ -129,7 +130,7 @@ class GPT(nn.Module):
         loss = None if targets is None else F.cross_entropy(logits.view(-1, self.config.vocab_size), targets.view(-1))
         return logits, loss
 
-    def configure_optimizers(self, train_config: TrainConfig):
+    def configure_optimizers(self, train_config: TrainConfig, device: str = 'cuda'):
         '''
         Setup the optimizer to have weight decay
         '''
@@ -146,12 +147,12 @@ class GPT(nn.Module):
         ]
         num_decay_params = sum(p.numel() for p in decay_params)
         num_nodecay_params = sum(p.numel() for p in nodecay_params)
-        print(f"num decayed parameter tensors: {len(decay_params)}, with {num_decay_params:,} parameters")
-        print(f"num non-decayed parameter tensors: {len(nodecay_params)}, with {num_nodecay_params:,} parameters")
+        logger.info(f"[GPT\t] num decayed parameter tensors: {len(decay_params)}, with {num_decay_params:,} parameters")
+        logger.info(f"[GPT\t] num non-decayed parameter tensors: {len(nodecay_params)}, with {num_nodecay_params:,} parameters")
         # Create AdamW optimizer and use the fused version if it is available
         fused_available = 'fused' in inspect.signature(torch.optim.AdamW).parameters
-        use_fused = fused_available and DEVICE == "cuda"
-        print(f"using fused AdamW: {use_fused}")
+        use_fused = fused_available and device == "cuda"
+        logger.info(f"[GPT\t] using fused AdamW: {use_fused}")
         optimizer = torch.optim.AdamW(optim_groups, lr=train_config.learning_rate, betas=tuple(train_config.adam_betas), eps=train_config.adam_eps, fused=use_fused)
         return optimizer
 
@@ -164,7 +165,7 @@ class GPT(nn.Module):
         """
         assert model_type in {'gpt2', 'gpt2-medium', 'gpt2-large', 'gpt2-xl'}
         from transformers import GPT2LMHeadModel
-        logging.info(f'[GPT\t] Loading weights from pretrained GPT: {model_type}')
+        logger.info(f'[GPT\t] Loading weights from pretrained GPT: {model_type}')
 
         # n_layer, n_head and n_embd are determined from model_type
         config_args = {
@@ -213,7 +214,7 @@ if __name__ == '__main__':
     CONFIG_PATH = 'config.yaml'
     config = yaml.safe_load(open(CONFIG_PATH, 'r'))
     gpt = GPT(GPTConfig(**config))
-    logging.info('[GPT\t] GPT2 model initialized successfully using YAML file!')
+    logger.info('[GPT\t] GPT2 model initialized successfully using YAML file!')
 
     # gpt = GPT.from_pretrained('gpt2')
-    # logging.info('[GPT\t]GPT2 model weights loaded successfully from HF!')
+    # logger.info('[GPT\t]GPT2 model weights loaded successfully from HF!')

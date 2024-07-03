@@ -3,6 +3,7 @@ import requests
 import tiktoken
 import torch
 import logging
+logger = logging.getLogger(__name__)
 from torch.utils.data import Dataset
 
 def get_tiny_shakespeare(save_path='tiny_shakespeare.txt'):
@@ -31,18 +32,22 @@ class ShakespeareDataset(Dataset):
     '''
     A small dataset that contains all the plays of shakespeare
     '''
-    def __init__(self, T: int) -> None:
+    def __init__(self, T: int, proc_rank: int = 0, n_procs: int = 1) -> None:
         '''
         Constructor
 
         args:
             T (int): context length
+            proc_rank (int): For DDP, rank of current process
+            n_procs (int): For DDP, total number of processes
         '''
         self.T = T
         self.tokens = get_tiny_shakespeare()
         if not len(self.tokens)%T:
             self.tokens = self.token[:-(len(self.tokens)%T)]    #remove the "left-over" tokens
-        logging.info(f'[DATALOADER\t] The dataset has {self.tokens.size(0)} tokens and {len(self)} samples')
+        logger.info(f'[DATALOADER\t] The dataset has {self.tokens.size(0)} tokens and {len(self)} samples, before splitting across processes.')
+        tokens_per_proc = len(self.tokens)//n_procs
+        self.tokens = self.tokens[proc_rank * tokens_per_proc : (proc_rank+1) * tokens_per_proc]
 
     def __len__(self):
         return len(self.tokens)//self.T

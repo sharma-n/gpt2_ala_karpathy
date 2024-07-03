@@ -1,6 +1,7 @@
 # GPT2 from Scratch - à la Andrej Karpathy
 This is my attempt to follow along (and re-produce in my own coding style) the lecture from Andrej Karpathy below:
-<iframe width="560" height="315" src="https://www.youtube.com/embed/l8pRSuU81PU?si=KDl_uFi2CL-RMPw6" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+
+[Let's reproduce GPT-2 (124M) by Andrej Karpathy on YouTube](https://youtu.be/l8pRSuU81PU?si=ubLsdiqtkD4MMyUv)
 
 This is going to mostly be a redo of the [build-nanogpt by Andrej Karpathy](https://github.com/karpathy/build-nanogpt) codebase, but I will be adding a lot more comments to keep track of my learnings throughout the process. Therefore, please use the original [build-nanogpt by Andrej Karpathy](https://github.com/karpathy/build-nanogpt). This repo is just for my own learnings.
 

@@ -33,11 +33,12 @@ def train(model: GPT, data: torch.utils.data.Dataset, config: TrainConfig):
     loss_accum, t0 = 0.0, time()
     for step, (x, y) in enumerate(dataloader):
         x, y = x.to(DEVICE), y.to(DEVICE)
+        if IS_DDP: model.require_backward_grad_sync = (step+1)%grad_accum_steps == 0
         with torch.autocast(device_type=DEVICE, dtype=torch.bfloat16):
             logits, loss = model(x, y)
         loss /= grad_accum_steps
         loss_accum += loss.detach()
-        if IS_DDP: model.require_backward_grad_sync = (step+1)%grad_accum_steps == 0
+    
         loss.backward()
 
         if (step+1)%grad_accum_steps == 0:      # gradient accumulation: do backward pass only every grad_accum_steps

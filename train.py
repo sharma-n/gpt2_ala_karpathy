@@ -22,27 +22,35 @@ def train(model: GPT, data: torch.utils.data.Dataset, config: TrainConfig):
         config (TrainConfig): Training config
     '''
     optimizer = model.configure_optimizers(config)
-    dataloader = DataLoader(data, batch_size=config.batch_size, shuffle=True)
-    for step, data in enumerate(dataloader):
-        t0 = time()
-        x, y = data
+    dataloader = DataLoader(data, batch_size=config.minibatch_size, shuffle=True)
+    assert config.batch_size % (config.minibatch_size * model.config.context_len) == 0, "batch size should be divisible by (minibatch_size * context_len)"
+    grad_accum_steps = config.batch_size // (config.minibatch_size * model.config.context_len)
+    logging.info(f'[TRAIN\t] For a total batch size of {config.batch_size}, doing gradient application over {grad_accum_steps} steps...')
+    loss_accum, t0 = 0.0, time()
+    for step, (x, y) in enumerate(dataloader):
         x, y = x.to(DEVICE), y.to(DEVICE)
-        optimizer.zero_grad()   # always remember to zero the grads at the start! because loss.backwards is an accumulation.
         with torch.autocast(device_type=DEVICE, dtype=torch.bfloat16):
             logits, loss = model(x, y)
+        loss /= grad_accum_steps
+        loss_accum += loss.detach()
         loss.backward()
-        norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)  # gradient clipping!
-        lr = cosine_lr_scheduler(step, config)
-        for param_group in optimizer.param_groups:
-            param_group['lr'] = lr
-        optimizer.step()
-        torch.cuda.synchronize()
-        t1 = time()
-        tokens_per_sec = (model.config.context_len*config.batch_size) / (t1-t0)
-        if USE_WANDB:
-            wandb.log({'loss': loss.item(), 'norm': norm ,'tok/sec': tokens_per_sec, 'lr': lr})
-        else:
-            logging.info(f'step {step}: loss = {loss.item()}, norm = {norm:.4f}, tok/sec = {tokens_per_sec:.2f}, lr = {lr:.5f}')
+
+        if (step+1)%grad_accum_steps == 0:      # gradient accumulation: do backward pass only every grad_accum_steps
+            norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)  # gradient clipping!
+            lr = cosine_lr_scheduler(step, config)
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = lr
+            optimizer.step()
+            optimizer.zero_grad()   # always remember to zero the grads! loss.backwards is an accumulation.
+            torch.cuda.synchronize()
+            t1 = time()
+            tokens_per_sec = config.batch_size / (t1-t0)
+            if USE_WANDB:
+                wandb.log({'loss': loss_accum, 'norm': norm ,'tok/sec': tokens_per_sec, 'lr': lr})
+            else:
+                logging.info(f'step {step}: loss = {loss_accum}, norm = {norm:.4f}, tok/sec = {tokens_per_sec:.2f}, lr = {lr:.5f}')
+            t0 = time()
+            loss_accum = 0.0
 
 USE_WANDB = False
 if __name__ == '__main__':
@@ -57,7 +65,7 @@ if __name__ == '__main__':
     torch.set_float32_matmul_precision('high')
 
     gpt = GPT(GPTConfig(**config))
-    logging.info('GPT2 model initialized successfully using YAML file!')
+    logging.info('[TRAIN\t] GPT2 model initialized successfully using YAML file!')
     gpt.to(DEVICE)
     ## TODO: When you train on the GPU box, make sure to change the following!
     # - Compile the model

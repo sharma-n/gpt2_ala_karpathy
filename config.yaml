@@ -7,7 +7,8 @@ n_head: 12
 init_linear_std: 0.02
 
 ## Learning hyperparameters
-batch_size: 8
+batch_size: 65536 # 524288  # in number of tokens. so actual "batch size" would be this number divided by the context length
+minibatch_size: 8   # max this to just fit into your GPU
 steps: 50
 eval_interval: 500
 eval_iters: 200

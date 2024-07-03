@@ -10,13 +10,13 @@ def get_device_type():
     Returns the device type (CUDA or MPS) if available, otherwise returns "cpu"
     """
     if torch.cuda.is_available():
-        logging.info('Using device: cuda')
+        logging.info('[UTILS\t] Using device: cuda')
         return "cuda"
     elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
-        logging.info('Using device: mps')
+        logging.info('[UTILS\t] Using device: mps')
         return "mps"
     else:
-        logging.info('Using device: cpu')
+        logging.info('[UTILS\t] Using device: cpu')
         return "cpu"
 DEVICE = get_device_type()
 
@@ -57,7 +57,8 @@ def sample(model, prompt: str, reps: int = 5, max_total_tokens: int = 30, topk: 
 
 @dataclass
 class TrainConfig:
-    batch_size: int = 64
+    batch_size: int = 524288
+    minibatch_size: int = 8
     steps: int = 5000
     eval_interval: int = 500
     eval_iters: int = 200

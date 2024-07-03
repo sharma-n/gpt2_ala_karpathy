@@ -164,7 +164,7 @@ class GPT(nn.Module):
         """
         assert model_type in {'gpt2', 'gpt2-medium', 'gpt2-large', 'gpt2-xl'}
         from transformers import GPT2LMHeadModel
-        logging.info(f'Loading weights from pretrained GPT: {model_type}')
+        logging.info(f'[GPT\t] Loading weights from pretrained GPT: {model_type}')
 
         # n_layer, n_head and n_embd are determined from model_type
         config_args = {
@@ -213,7 +213,7 @@ if __name__ == '__main__':
     CONFIG_PATH = 'config.yaml'
     config = yaml.safe_load(open(CONFIG_PATH, 'r'))
     gpt = GPT(GPTConfig(**config))
-    logging.info('GPT2 model initialized successfully using YAML file!')
+    logging.info('[GPT\t] GPT2 model initialized successfully using YAML file!')
 
     # gpt = GPT.from_pretrained('gpt2')
-    # logging.info('GPT2 model weights loaded successfully from HF!')
+    # logging.info('[GPT\t]GPT2 model weights loaded successfully from HF!')

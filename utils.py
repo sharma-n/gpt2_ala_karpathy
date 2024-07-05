@@ -70,6 +70,7 @@ class TrainConfig:
     lr_warmup_steps: int = 10
     lr_max_steps: int = 50
     weight_decay: float = 0.1
+    val_steps: int = 20
 
     def __init__(self, **kwargs):
         names = set([f.name for f in fields(self)])

@@ -7,8 +7,8 @@ n_head: 12
 init_linear_std: 0.02
 
 ## Learning hyperparameters
-batch_size: 524288  # in number of tokens. so actual "batch size" would be this number divided by the context length
-minibatch_size: 64   # max this to just fit into your GPU
+batch_size: 65536 #524288  # in number of tokens. so actual "batch size" would be this number divided by the context length
+minibatch_size: 8 #64   # max this to just fit into your GPU
 epochs: 5
 eval_interval: 500
 eval_iters: 200
@@ -21,6 +21,7 @@ lr_min: 6.0e-5
 lr_warmup_steps: 715
 lr_max_steps: 50
 weight_decay: 0.1
+val_steps: 20
 
 ## Other Config
 use_wandb: False

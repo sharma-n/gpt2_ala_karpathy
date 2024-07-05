@@ -1,10 +1,14 @@
 from os.path import exists
+import numpy as np
 import requests
 import tiktoken
 import torch
 import logging
+import h5py
 logger = logging.getLogger(__name__)
 from torch.utils.data import Dataset
+from fineweb import download_fineweb
+from os import path, listdir
 
 def get_tiny_shakespeare(save_path='tiny_shakespeare.txt'):
     '''
@@ -56,3 +60,32 @@ class ShakespeareDataset(Dataset):
         x = self.tokens[i*self.T: (i+1)*self.T]
         y = self.tokens[(i*self.T)+1: ((i+1)*self.T)+1]
         return x,y
+    
+class FineWedEduDataset(Dataset):
+    def __init__(self, T: int, split: str, datapath: str = 'edu_fineweb10B.hdf5', proc_rank: int = 0, n_procs: int = 1) -> None:
+        '''
+        Constructor
+
+        args:
+            T (int): context length
+            split (str): one of train | val
+            datapath (str): Path to folder where the data is. If path doesn't exist, the data will be downloaded.
+            proc_rank (int): For DDP, rank of current process
+            n_procs (int): For DDP, total number of processes
+        '''
+        self.T, self.proc_rank, self.n_procs = T, proc_rank, n_procs
+        assert split in ['train','val'], 'split must be one of train | val'
+        if not path.exists(datapath): download_fineweb(datapath, shard_size=T)
+        self.datafile = h5py.File(datapath, 'r')
+        if split == 'train':
+            self.data = self.datafile['edu_fineweb_train']
+        else:
+            self.data = self.datafile['edu_fineweb_val']
+
+    def __len__(self):
+        return self.data.shape[0] // (self.T*self.n_procs)
+    
+    def __getitem__(self, idx):
+        i = idx + (self.proc_rank * len(self))
+        tokens = torch.tensor(self.data[self.T*i : self.T*(i+1)+1].astype(np.int32), dtype=torch.long)
+        return tokens[:-1], tokens[1:]

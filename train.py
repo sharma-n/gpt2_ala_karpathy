@@ -11,7 +11,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 from gpt import GPT
-from dataset import ShakespeareDataset
+from dataset import FineWedEduDataset
 from utils import get_device_type, TrainConfig, GPTConfig, cosine_lr_scheduler
 
 
@@ -26,7 +26,7 @@ def train(model: GPT, data: torch.utils.data.Dataset, config: TrainConfig):
     '''
     raw_model = model.module if IS_DDP else model
     optimizer = raw_model.configure_optimizers(config, DEVICE)
-    dataloader = DataLoader(data, batch_size=config.minibatch_size, shuffle=True)
+    dataloader = DataLoader(data, batch_size=config.minibatch_size, shuffle=True, num_workers=4)
     assert config.batch_size % (config.minibatch_size * raw_model.config.context_len * DDP_WORLD_SIZE) == 0, "batch size should be divisible by (minibatch_size * context_len * DDP_WORLD_SIZE)"
     grad_accum_steps = config.batch_size // (config.minibatch_size * raw_model.config.context_len * DDP_WORLD_SIZE)
     logger.info(f'[TRAIN\t] For a total batch size of {config.batch_size}, doing gradient application over {grad_accum_steps} steps...')
@@ -100,6 +100,7 @@ if __name__ == '__main__':
     # gpt = torch.compile(gpt)
     if IS_DDP: gpt = DDP(gpt, device_ids=[DDP_LOCAL_RANK])
 
-    data = ShakespeareDataset(config['context_len'], DDP_RANK, DDP_WORLD_SIZE)
+    # data = ShakespeareDataset(config['context_len'], DDP_RANK, DDP_WORLD_SIZE)
+    data = FineWedEduDataset(config['context_len'], 'train', proc_rank=DDP_RANK, n_procs=DDP_WORLD_SIZE)
     train(gpt, data, TrainConfig(**config))
     if IS_DDP: dist.destroy_process_group()

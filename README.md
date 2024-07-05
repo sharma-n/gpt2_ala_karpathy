@@ -7,7 +7,7 @@ This is going to mostly be a redo of the [build-nanogpt by Andrej Karpathy](http
 
 ## Changes I made on top of Karpathy's code
 - Keeping track of runs, losses, configs, weights using `wandb`
-- Used the torch `Dataset` class so that we can have proper shuffling. This means I do DDP slightly differently on the data side.
+- Used the torch `Dataset` class so that we can have proper shuffling. This means I do DDP slightly differently on the data side. The FineWeb tokens are saved in chunked HDF5 file.
 - Refactoring the code into three main files:
   - `gpt.py`: The model definition
   - `dataset.py`: The dataset
@@ -26,6 +26,10 @@ This is going to mostly be a redo of the [build-nanogpt by Andrej Karpathy](http
 - **Gradient clipping**: Usually a good idea, as it protects you from really weird training samples that would get a very high loss and disturb the learning process and shock the model. It's also a good idea to plot the gradient norm over time. If it increases over time, there is something wrong. If there's a spike in it, there's an issue of stability.
 - **Weight Decaying**: A good regularization technique that forces the model to use more of its channels, instead of focussing on only a few. It is common to *not* weight decay bias vectors or any other one-dimensional vectors (e.g. layer norms).
 - **Gradient Accumulation**: The way to get very large batch sizes (for example, for GPT2-124M the batch size was 0.5M tokens). Remember that when doing gradient accumulation, you need to scale the loss at each steps by the number of accumulation steps! This will make training more stable, and also leads to some performance improvements since you're not doing backprop so often.
+- **Good public datasets for pre-training**
+  - [RedPajama](https://github.com/togethercomputer/RedPajama-Data)
+  - [SlimPajama](https://www.cerebras.net/blog/slimpajama-a-627b-token-cleaned-and-deduplicated-version-of-redpajama)
+  - [FineWeb](https://huggingface.co/datasets/HuggingFaceFW/fineweb)
 - Steps to speed up training (at the start, on my RTX 3060 Laptop GPU, I was getting a measly $215$ tok/sec 🥲):
   - Use Float32 by adding `torch.set_float32_matmul_precision('high')` ($215\to 274$ tok/sec, $+27.4\%$)
   - [BF16 Mixed Precision](https://pytorch.org/tutorials/recipes/recipes/amp_recipe.html) ($274\to 327, +19.3\%$)
@@ -33,3 +37,4 @@ This is going to mostly be a redo of the [build-nanogpt by Andrej Karpathy](http
   - Using flash attention 2 ($327\to 1100, +236.4\%$ 😍)
   - Using powers of 2 everywhere ($1100\to 1150, +4.35\%$; additionally, at least on my laptop GPU, this led to more consistent tok/sec numbers across iterations 🤔)
   - Use kernel fusion for AdamW
+  - Using Data Distribution Pipeline (if you have multiple GPUs)

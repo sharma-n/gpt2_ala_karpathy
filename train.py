@@ -14,6 +14,22 @@ from gpt import GPT
 from dataset import FineWedEduDataset
 from utils import get_device_type, TrainConfig, GPTConfig, cosine_lr_scheduler
 
+def get_validation_loss(model: GPT, val_dataloader, val_steps, device_type):
+    '''
+    Calculate the validation loss
+    '''
+    val_iter = iter(val_dataloader)
+    with torch.no_grad():
+        val_loss_accum = 0.0
+        for _ in range(val_steps):
+            x, y = next(val_iter)
+            x, y = x.to(DEVICE), y.to(DEVICE)
+            with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
+                _, loss = model(x, y)
+            loss = loss / val_steps
+            val_loss_accum += loss.detach()
+    if IS_DDP: dist.all_reduce(val_loss_accum, op=dist.ReduceOp.AVG)
+    return val_loss_accum.item()
 
 def train(model: GPT, train_data: torch.utils.data.Dataset, val_data: torch.utils.data.Dataset, config: TrainConfig):
     '''
@@ -29,61 +45,52 @@ def train(model: GPT, train_data: torch.utils.data.Dataset, val_data: torch.util
     optimizer = raw_model.configure_optimizers(config, DEVICE)
     train_dataloader = DataLoader(train_data, batch_size=config.minibatch_size, shuffle=True, num_workers=0)
     val_dataloader = DataLoader(val_data, batch_size=config.minibatch_size, shuffle=True, num_workers=0)
+    train_iter = iter(train_dataloader)
     assert config.batch_size % (config.minibatch_size * raw_model.config.context_len * DDP_WORLD_SIZE) == 0, f"batch size ({config.batch_size}) should be divisible by (minibatch_size * context_len * DDP_WORLD_SIZE) ({(config.minibatch_size * raw_model.config.context_len * DDP_WORLD_SIZE)})"
     grad_accum_steps = config.batch_size // (config.minibatch_size * raw_model.config.context_len * DDP_WORLD_SIZE)
     logger.info(f'[TRAIN\t] For a total batch size of {config.batch_size}, doing gradient application over {grad_accum_steps} steps...')
-    loss_accum, t0, step_accum = 0.0, time(), 0
     device_type = "cuda" if DEVICE.startswith("cuda") else "cpu"
-    for _ in range(config.epochs):
-        for step, (x, y) in enumerate(train_dataloader):
-            ## VALIDATE
-            if step % (10 * grad_accum_steps) == 0:
-                model.eval()
-                val_iter = iter(val_dataloader)
-                with torch.no_grad():
-                    val_loss_accum = 0.0
-                    for _ in range(config.val_steps):
-                        xval, yval = next(val_iter)
-                        xval, yval = xval.to(DEVICE), yval.to(DEVICE)
-                        with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
-                            _, loss = model(xval, yval)
-                        loss = loss / config.val_steps
-                        val_loss_accum += loss.detach()
-                if IS_DDP: dist.all_reduce(val_loss_accum, op=dist.ReduceOp.AVG)
-                if USE_WANDB and MASTER_PROCESS:
-                    wandb.log({'val_loss': val_loss_accum.item()})
-                else:
-                    logger.info(f'Validation loss = {val_loss_accum.item():.4f}')
+    for step in range(config.max_steps):
+        t0 = time()
+        ## VALIDATE
+        if step % 250 == 0:
+            model.eval()
+            val_loss_accum = get_validation_loss(model, val_dataloader, config.val_steps, device_type)
+            if USE_WANDB and MASTER_PROCESS:
+                wandb.log({'val_loss': val_loss_accum})
+            else:
+                logger.info(f'Validation loss = {val_loss_accum:.4f}')
 
-            ## TRAIN
-            model.train()
+        ## TRAIN
+        model.train()
+        optimizer.zero_grad()   # always remember to zero the grads! loss.backwards is an accumulation.
+        loss_accum = 0.0
+        for micro_step in range(grad_accum_steps):
+            try:
+                x, y = next(train_iter)
+            except StopIteration:                       # if one epoch is done, re-start from the beginning
+                train_iter = iter(train_dataloader)
+                x, y = next(train_iter)
             x, y = x.to(DEVICE), y.to(DEVICE)
-            if IS_DDP: model.require_backward_grad_sync = (step+1)%grad_accum_steps == 0
+            if IS_DDP: model.require_backward_grad_sync = (micro_step == grad_accum_steps - 1)
             with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
-                logits, loss = model(x, y)
+                _, loss = model(x, y)
             loss /= grad_accum_steps
             loss_accum += loss.detach()
-        
             loss.backward()
-
-            if (step+1)%grad_accum_steps == 0:      # gradient accumulation: do backward pass only every grad_accum_steps
-                if IS_DDP: dist.all_reduce(loss_accum, dist.ReduceOp.AVG)
-                norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)  # gradient clipping!
-                lr = cosine_lr_scheduler(step, config)
-                for param_group in optimizer.param_groups:
-                    param_group['lr'] = lr
-                optimizer.step()
-                optimizer.zero_grad()   # always remember to zero the grads! loss.backwards is an accumulation.
-                torch.cuda.synchronize()
-                t1 = time()
-                tokens_per_sec = (config.batch_size * DDP_WORLD_SIZE) / (t1-t0)
-                if USE_WANDB and MASTER_PROCESS:
-                    wandb.log({'loss': loss_accum.item(), 'norm': norm ,'tok/sec': tokens_per_sec, 'lr': lr})
-                else:
-                    logger.info(f'step {step_accum}: loss = {loss_accum.item()}, norm = {norm:.4f}, tok/sec = {tokens_per_sec:.2f}, lr = {lr:.5f}')
-                t0 = time()
-                loss_accum = 0.0
-                step_accum += 1
+        if IS_DDP: dist.all_reduce(loss_accum, dist.ReduceOp.AVG)
+        norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)  # gradient clipping!
+        lr = cosine_lr_scheduler(step, config)
+        for param_group in optimizer.param_groups:
+            param_group['lr'] = lr
+        optimizer.step()
+        torch.cuda.synchronize()
+        t1 = time()
+        tokens_per_sec = (config.batch_size * DDP_WORLD_SIZE) / (t1-t0)
+        if USE_WANDB and MASTER_PROCESS:
+            wandb.log({'loss': loss_accum.item(), 'norm': norm ,'tok/sec': tokens_per_sec, 'lr': lr})
+        else:
+            logger.info(f'step {step}: loss = {loss_accum.item():.6f}, norm = {norm:.4f}, tok/sec = {tokens_per_sec:.2f}, lr = {lr:.5f}')
 
 if __name__ == '__main__':
     ##########

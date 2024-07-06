@@ -53,7 +53,7 @@ def sample(model, prompt: str, reps: int = 5, max_total_tokens: int = 30, topk: 
             # append to the sequence for next prediction
             x = torch.cat((x, xcol), dim=1)
     
-    samples = [enc.decode(x[i,:].tolist()) for i in range(reps)]
+    samples = [[enc.decode(x[i,:].tolist())] for i in range(reps)]
     return samples
 
 @dataclass
@@ -62,9 +62,6 @@ class TrainConfig:
     minibatch_size: int = 8
     max_steps: int = 19073
     eval_interval: int = 500
-    eval_iters: int = 200
-    learning_rate: float = 3e-4
-    dropout: float = 0.2
     adam_betas: list[float] = field(default_factory=lambda: [0.9, 0.95])
     adam_eps: float = 1e-8
     lr_max: float = 3.0e-4
@@ -111,3 +108,25 @@ def cosine_lr_scheduler(it: int, config: TrainConfig):
     assert 0 <= decay_ratio <= 1
     coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))   #coeff starts at 1 and goes to 0
     return config.lr_min + coeff * (config.lr_max - config.lr_min)
+
+def get_most_likely_row(tokens, mask, logits):
+    '''
+    Helper function that returns the index of the completion with the lowest loss
+    '''
+    # evaluate the autoregressive loss at all positions
+    shift_logits = (logits[..., :-1, :]).contiguous()
+    shift_tokens = (tokens[..., 1:]).contiguous()
+    flat_shift_logits = shift_logits.view(-1, shift_logits.size(-1))
+    flat_shift_tokens = shift_tokens.view(-1)
+    shift_losses = F.cross_entropy(flat_shift_logits, flat_shift_tokens, reduction='none')
+    shift_losses = shift_losses.view(tokens.size(0), -1)
+    # now get the average loss just for the completion region (where mask == 1), in each row
+    shift_mask = (mask[..., 1:]).contiguous() # we must shift mask, so we start at the last prompt token
+    masked_shift_losses = shift_losses * shift_mask
+    # sum and divide by the number of 1s in the mask
+    sum_loss = masked_shift_losses.sum(dim=1)
+    avg_loss = sum_loss / shift_mask.sum(dim=1)
+    # now we have a loss for each of the 4 completions
+    # the one with the lowest loss should be the most likely
+    pred_norm = avg_loss.argmin().item()
+    return pred_norm

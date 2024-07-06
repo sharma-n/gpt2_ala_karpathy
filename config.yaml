@@ -7,23 +7,20 @@ n_head: 12
 init_linear_std: 0.02
 
 ## Learning hyperparameters
-batch_size: 65536 #524288  # in number of tokens. so actual "batch size" would be this number divided by the context length
-minibatch_size: 8 #64   # max this to just fit into your GPU
-max_steps: 19073  # one epoch is roughly 19073 steps
-eval_interval: 500
-eval_iters: 200
-learning_rate: 3.0e-4
-dropout: 0.2
+batch_size: 524288  # in number of tokens. so actual "batch size" would be this number divided by the context length
+minibatch_size: 64   # max this to just fit into your GPU
+max_steps: 38146  # one epoch is roughly 19073 steps
+eval_interval: 250
+val_steps: 20
 adam_betas: [0.9, 0.95]
 adam_eps: 1.0e-8
-lr_max: 6.0e-4
+lr_max: 18.0e-4
 lr_min: 6.0e-5
 lr_warmup_steps: 715
 lr_max_steps: 50
 weight_decay: 0.1
-val_steps: 20
-dataloader_nworkers: 0      ## CHANGE!!!
+dataloader_nworkers: 4
 
 ## Other Config
-use_wandb: False            ## CHANGE!!!
-use_compile: False          ## CHANGE!!!
+use_wandb: True
+use_compile: True

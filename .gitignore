@@ -2,3 +2,5 @@
 .vscode/
 wandb/
 edu_fineweb10B.hdf5
+hellaswag/
+ckpts/

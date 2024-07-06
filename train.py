@@ -12,7 +12,8 @@ logger = logging.getLogger(__name__)
 
 from gpt import GPT
 from dataset import FineWedEduDataset
-from utils import get_device_type, TrainConfig, GPTConfig, cosine_lr_scheduler, sample
+from utils import get_device_type, TrainConfig, GPTConfig, cosine_lr_scheduler, sample, get_most_likely_row
+from hellaswag import iterate_examples, render_example
 
 def get_validation_loss(model: GPT, val_dataloader, val_steps, device_type):
     '''
@@ -30,6 +31,32 @@ def get_validation_loss(model: GPT, val_dataloader, val_steps, device_type):
             val_loss_accum += loss.detach()
     if IS_DDP: dist.all_reduce(val_loss_accum, op=dist.ReduceOp.AVG)
     return val_loss_accum.item()
+
+def get_hellaswag_eval(model, device_type):
+    num_correct_norm, num_total = 0, 0
+    for i, ex in enumerate(iterate_examples("val")):
+        if i % DDP_WORLD_SIZE != DDP_RANK:
+            continue
+        # render the example into tokens and labels
+        _, tokens, mask, label = render_example(ex)
+        tokens = tokens.to(DEVICE)
+        mask = mask.to(DEVICE)
+        # get the logits
+        with torch.no_grad():
+            with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
+                logits, _ = model(tokens)
+            pred_norm = get_most_likely_row(tokens, mask, logits)
+        num_total += 1
+        num_correct_norm += int(pred_norm == label)
+    if IS_DDP:
+        num_total = torch.tensor(num_total, dtype=torch.long, device=DEVICE)
+        num_correct_norm = torch.tensor(num_correct_norm, dtype=torch.long, device=DEVICE)
+        dist.all_reduce(num_total, op=dist.ReduceOp.SUM)
+        dist.all_reduce(num_correct_norm, op=dist.ReduceOp.SUM)
+        num_total = num_total.item()
+        num_correct_norm = num_correct_norm.item()
+    acc_norm = num_correct_norm / num_total
+    return acc_norm
 
 def train(model: GPT, train_data: torch.utils.data.Dataset, val_data: torch.utils.data.Dataset, config: TrainConfig):
     '''
@@ -53,17 +80,31 @@ def train(model: GPT, train_data: torch.utils.data.Dataset, val_data: torch.util
     for step in range(config.max_steps):
         t0 = time()
         ## VALIDATE
-        if step != 0 and step % 250 == 0:
+        if step != 0 and step % config.eval_interval == 0:
             model.eval()
             val_loss_accum = get_validation_loss(model, val_dataloader, config.val_steps, device_type)
-            if MASTER_PROCESS: samples = sample(model, "Hello, I'm a language model,", device=DEVICE)
-            if USE_WANDB and MASTER_PROCESS:
-                wandb.log({'val_loss': val_loss_accum, 'samples': samples})
-            else:
-                logger.info(f"Validation loss = {val_loss_accum:.4f}")
-                if MASTER_PROCESS:
-                    samples = '\n'.join(samples)
-                    logger.info(f'Samples: {samples}')
+            hellaswag_acc = get_hellaswag_eval(model, device_type)
+            if MASTER_PROCESS:
+                # logger.info(f"Validation loss = {val_loss_accum:.4f}, Hellaswag Accuracy: {hellaswag_acc:.4f}")
+                samples = sample(model, "Hello, I'm a language model,", device=DEVICE)
+                # logger.info(f'Samples: {samples}')
+                if USE_WANDB:
+                    wandb.log({'val_loss': val_loss_accum, 'hellaswag_acc': hellaswag_acc, 'samples': wandb.Table(columns=['Samples'], data=samples)})
+                if step % 5000 == 0:
+                    ckpt_path = f'ckpts/model_{step:05d}.pt'
+                    ckpt = {
+                        'model': raw_model.state_dict(),
+                        'config': raw_model.config,
+                        'step': step,
+                        'val_loss': val_loss_accum,
+                        'optimizer': optimizer.state_dict(),
+                        'seed': 42
+                    }
+                    torch.save(ckpt, ckpt_path)
+                    if USE_WANDB:
+                        wandb_ckpt = wandb.Artifact(f'checkpoint_{step:05d}', type='model', description='Model checkpoints')
+                        wandb_ckpt.add_file(ckpt_path, skip_cache=True)
+                        wandb.log_artifact(wandb_ckpt)
 
         ## TRAIN
         model.train()
@@ -91,10 +132,9 @@ def train(model: GPT, train_data: torch.utils.data.Dataset, val_data: torch.util
         torch.cuda.synchronize()
         t1 = time()
         tokens_per_sec = (config.batch_size * DDP_WORLD_SIZE) / (t1-t0)
-        if USE_WANDB and MASTER_PROCESS:
+        if MASTER_PROCESS:
             wandb.log({'loss': loss_accum.item(), 'norm': norm ,'tok/sec': tokens_per_sec, 'lr': lr})
-        else:
-            logger.info(f'step {step}: loss = {loss_accum.item():.6f}, norm = {norm:.4f}, tok/sec = {tokens_per_sec:.2f}, lr = {lr:.5f}')
+        # logger.info(f'step {step}: loss = {loss_accum.item():.6f}, norm = {norm:.4f}, tok/sec = {tokens_per_sec:.2f}, lr = {lr:.5f}')
 
 if __name__ == '__main__':
     ##########

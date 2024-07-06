@@ -153,7 +153,7 @@ class GPT(nn.Module):
         fused_available = 'fused' in inspect.signature(torch.optim.AdamW).parameters
         use_fused = fused_available and device == "cuda"
         logger.info(f"[GPT\t] using fused AdamW: {use_fused}")
-        optimizer = torch.optim.AdamW(optim_groups, lr=train_config.learning_rate, betas=tuple(train_config.adam_betas), eps=train_config.adam_eps, fused=use_fused)
+        optimizer = torch.optim.AdamW(optim_groups, lr=train_config.lr_min, betas=tuple(train_config.adam_betas), eps=train_config.adam_eps, fused=use_fused)
         return optimizer
 
     @classmethod

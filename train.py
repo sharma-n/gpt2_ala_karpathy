@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 from gpt import GPT
 from dataset import FineWedEduDataset
-from utils import get_device_type, TrainConfig, GPTConfig, cosine_lr_scheduler
+from utils import get_device_type, TrainConfig, GPTConfig, cosine_lr_scheduler, sample
 
 def get_validation_loss(model: GPT, val_dataloader, val_steps, device_type):
     '''
@@ -43,8 +43,8 @@ def train(model: GPT, train_data: torch.utils.data.Dataset, val_data: torch.util
     '''
     raw_model = model.module if IS_DDP else model
     optimizer = raw_model.configure_optimizers(config, DEVICE)
-    train_dataloader = DataLoader(train_data, batch_size=config.minibatch_size, shuffle=True, num_workers=0)
-    val_dataloader = DataLoader(val_data, batch_size=config.minibatch_size, shuffle=True, num_workers=0)
+    train_dataloader = DataLoader(train_data, batch_size=config.minibatch_size, shuffle=True, num_workers=config.dataloader_nworkers)
+    val_dataloader = DataLoader(val_data, batch_size=config.minibatch_size, shuffle=True, num_workers=config.dataloader_nworkers)
     train_iter = iter(train_dataloader)
     assert config.batch_size % (config.minibatch_size * raw_model.config.context_len * DDP_WORLD_SIZE) == 0, f"batch size ({config.batch_size}) should be divisible by (minibatch_size * context_len * DDP_WORLD_SIZE) ({(config.minibatch_size * raw_model.config.context_len * DDP_WORLD_SIZE)})"
     grad_accum_steps = config.batch_size // (config.minibatch_size * raw_model.config.context_len * DDP_WORLD_SIZE)
@@ -53,13 +53,17 @@ def train(model: GPT, train_data: torch.utils.data.Dataset, val_data: torch.util
     for step in range(config.max_steps):
         t0 = time()
         ## VALIDATE
-        if step % 250 == 0:
+        if step != 0 and step % 250 == 0:
             model.eval()
             val_loss_accum = get_validation_loss(model, val_dataloader, config.val_steps, device_type)
+            if MASTER_PROCESS: samples = sample(model, "Hello, I'm a language model,", device=DEVICE)
             if USE_WANDB and MASTER_PROCESS:
-                wandb.log({'val_loss': val_loss_accum})
+                wandb.log({'val_loss': val_loss_accum, 'samples': samples})
             else:
-                logger.info(f'Validation loss = {val_loss_accum:.4f}')
+                logger.info(f"Validation loss = {val_loss_accum:.4f}")
+                if MASTER_PROCESS:
+                    samples = '\n'.join(samples)
+                    logger.info(f'Samples: {samples}')
 
         ## TRAIN
         model.train()
@@ -128,7 +132,8 @@ if __name__ == '__main__':
     ## TODO: When you train on the GPU box, make sure to change the following!
     # - Compile the model
     # - remove the cuda.synchronize()
-    # gpt = torch.compile(gpt)
+    if config['use_compile']:
+        gpt = torch.compile(gpt)
     if IS_DDP: gpt = DDP(gpt, device_ids=[DDP_LOCAL_RANK])
 
     # data = ShakespeareDataset(config['context_len'], DDP_RANK, DDP_WORLD_SIZE)

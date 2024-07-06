@@ -22,6 +22,8 @@ lr_warmup_steps: 715
 lr_max_steps: 50
 weight_decay: 0.1
 val_steps: 20
+dataloader_nworkers: 0      ## CHANGE!!!
 
 ## Other Config
-use_wandb: False
+use_wandb: False            ## CHANGE!!!
+use_compile: False          ## CHANGE!!!

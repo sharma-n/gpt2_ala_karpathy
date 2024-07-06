@@ -20,7 +20,7 @@ def get_device_type():
         logger.info('[UTILS\t] Using device: cpu')
         return "cpu"
 
-def sample(model, prompt: str, reps: int = 5, max_total_tokens: int = 30, topk: int =50):
+def sample(model, prompt: str, reps: int = 5, max_total_tokens: int = 30, topk: int =50, device = 'cuda'):
     '''
     Runs the GPT model on a given string to get back samples of outputs.
 
@@ -30,22 +30,24 @@ def sample(model, prompt: str, reps: int = 5, max_total_tokens: int = 30, topk: 
         reps (int): number of samples to draw
         max_total_tokens (int): number of new tokens in each sample
         topk (int): Top-K sampling
+        device (str): device to use
     '''
-    model.eval()
     enc = tiktoken.get_encoding('gpt2')
     tokens = torch.tensor(enc.encode(prompt), dtype=torch.long)
     tokens = tokens.unsqueeze(0).repeat(reps, 1)    # (reps, len(prompt))
-
+    x = tokens.to(device)
+    sample_rng = torch.Generator(device=device)
+    sample_rng.manual_seed(42)
     while x.size(1) < max_total_tokens:
         with torch.no_grad():
-            logits = model(x)    # (B, T, vocab_size)
+            logits, _ = model(x)    # (B, T, vocab_size)
             logits = logits[:, -1, :]   # take only the predictions for T+1
             probs = F.softmax(logits, dim=-1)
             # topk sampling where you only sample from the k most probable tokens
             # topk_probs and topk_indices are both (B,topk)
             topk_probs, topk_indices = torch.topk(probs, topk, dim=-1)
             # select a single token based on the probabilities
-            ix = torch.multinomial(topk_probs, 1)   #(B,1)
+            ix = torch.multinomial(topk_probs, 1, generator=sample_rng)   #(B,1)
             # gather the corresponding indices
             xcol = torch.gather(topk_indices, -1, ix)
             # append to the sequence for next prediction
@@ -71,6 +73,7 @@ class TrainConfig:
     lr_max_steps: int = 50
     weight_decay: float = 0.1
     val_steps: int = 20
+    dataloader_nworkers: int = 4
 
     def __init__(self, **kwargs):
         names = set([f.name for f in fields(self)])

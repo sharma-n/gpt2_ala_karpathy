@@ -58,7 +58,7 @@ def get_hellaswag_eval(model, device_type):
     acc_norm = num_correct_norm / num_total
     return acc_norm
 
-def train(model: GPT, train_data: torch.utils.data.Dataset, val_data: torch.utils.data.Dataset, config: TrainConfig):
+def train(model: GPT, train_data: torch.utils.data.Dataset, val_data: torch.utils.data.Dataset, config: TrainConfig, ckpt_dir: str = 'data/ckpts/'):
     '''
     Train a GPT model on given data.
 
@@ -67,6 +67,7 @@ def train(model: GPT, train_data: torch.utils.data.Dataset, val_data: torch.util
         train_data (torch.utils.data.Dataset): Torch data for training
         val_data (torch.utils.data.Dataset): Torch data for validation
         config (TrainConfig): Training config
+        ckpt_dir (str): path to folder where the checkpoints are saved
     '''
     raw_model = model.module if IS_DDP else model
     optimizer = raw_model.configure_optimizers(config, DEVICE)
@@ -77,6 +78,7 @@ def train(model: GPT, train_data: torch.utils.data.Dataset, val_data: torch.util
     grad_accum_steps = config.batch_size // (config.minibatch_size * raw_model.config.context_len * DDP_WORLD_SIZE)
     logger.info(f'[TRAIN\t] For a total batch size of {config.batch_size}, doing gradient application over {grad_accum_steps} steps...')
     device_type = "cuda" if DEVICE.startswith("cuda") else "cpu"
+    if not os.path.exists(ckpt_dir): os.makedirs(ckpt_dir)
     for step in range(config.max_steps):
         t0 = time()
         ## VALIDATE
@@ -91,7 +93,7 @@ def train(model: GPT, train_data: torch.utils.data.Dataset, val_data: torch.util
                 if USE_WANDB:
                     wandb.log({'val_loss': val_loss_accum, 'hellaswag_acc': hellaswag_acc, 'samples': wandb.Table(columns=['Samples'], data=samples)})
                 if step % 5000 == 0:
-                    ckpt_path = f'ckpts/model_{step:05d}.pt'
+                    ckpt_path = os.path.join(ckpt_path, f'model_{step:05d}.pt')
                     ckpt = {
                         'model': raw_model.state_dict(),
                         'config': raw_model.config,
@@ -129,7 +131,7 @@ def train(model: GPT, train_data: torch.utils.data.Dataset, val_data: torch.util
         for param_group in optimizer.param_groups:
             param_group['lr'] = lr
         optimizer.step()
-        torch.cuda.synchronize()
+        # torch.cuda.synchronize()
         t1 = time()
         tokens_per_sec = (config.batch_size * DDP_WORLD_SIZE) / (t1-t0)
         if MASTER_PROCESS:
@@ -145,10 +147,6 @@ if __name__ == '__main__':
     IS_DDP = int(os.environ.get('RANK', -1)) != -1 # check if using DDP
     config = yaml.safe_load(open(CONFIG_PATH, 'r'))
 
-    if config['use_wandb']:
-        import wandb
-        wandb.init(project='gpt2_ala_karpathy', config=config)
-        USE_WANDB = True
     if IS_DDP:
         assert torch.cuda.is_available()
         dist.init_process_group(backend='nccl')
@@ -164,7 +162,12 @@ if __name__ == '__main__':
     torch.manual_seed(42)
     torch.cuda.manual_seed(42)
     torch.set_float32_matmul_precision('high')
-    if MASTER_PROCESS: logging.basicConfig(level=logging.INFO)
+    if MASTER_PROCESS:
+        logging.basicConfig(level=logging.INFO)
+        if config['use_wandb']:
+            import wandb
+            wandb.init(project='gpt2_ala_karpathy', config=config)
+            USE_WANDB = True
 
     gpt = GPT(GPTConfig(**config))
     logger.info('[TRAIN\t] GPT2 model initialized successfully using YAML file!')
@@ -177,7 +180,7 @@ if __name__ == '__main__':
     if IS_DDP: gpt = DDP(gpt, device_ids=[DDP_LOCAL_RANK])
 
     # data = ShakespeareDataset(config['context_len'], DDP_RANK, DDP_WORLD_SIZE)
-    train_data = FineWedEduDataset(config['context_len'], 'train', proc_rank=DDP_RANK, n_procs=DDP_WORLD_SIZE)
-    val_data = FineWedEduDataset(config['context_len'], 'val', proc_rank=DDP_RANK, n_procs=DDP_WORLD_SIZE)
-    train(gpt, train_data, val_data, TrainConfig(**config))
+    train_data = FineWedEduDataset(config['context_len'], 'train', datapath=config['datapath'], proc_rank=DDP_RANK, n_procs=DDP_WORLD_SIZE)
+    val_data = FineWedEduDataset(config['context_len'], 'val', datapath=config['datapath'], proc_rank=DDP_RANK, n_procs=DDP_WORLD_SIZE)
+    train(gpt, train_data, val_data, TrainConfig(**config), ckpt_dir=config['ckptdir'])
     if IS_DDP: dist.destroy_process_group()

@@ -67,7 +67,6 @@ class TrainConfig:
     lr_max: float = 3.0e-4
     lr_min: float = 3.0e-5
     lr_warmup_steps: int = 10
-    lr_max_steps: int = 50
     weight_decay: float = 0.1
     val_steps: int = 20
     dataloader_nworkers: int = 4
@@ -102,9 +101,9 @@ def cosine_lr_scheduler(it: int, config: TrainConfig):
     '''
     if it < config.lr_warmup_steps:
         return config.lr_max * (it+1) / config.lr_warmup_steps
-    if it > config.lr_max_steps:
+    if it > config.max_steps:
         return config.lr_min
-    decay_ratio = (it-config.lr_warmup_steps) / (config.lr_max_steps - config.lr_warmup_steps)
+    decay_ratio = (it-config.lr_warmup_steps) / (config.max_steps - config.lr_warmup_steps)
     assert 0 <= decay_ratio <= 1
     coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))   #coeff starts at 1 and goes to 0
     return config.lr_min + coeff * (config.lr_max - config.lr_min)

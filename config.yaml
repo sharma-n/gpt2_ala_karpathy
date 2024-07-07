@@ -17,10 +17,11 @@ adam_eps: 1.0e-8
 lr_max: 18.0e-4
 lr_min: 6.0e-5
 lr_warmup_steps: 715
-lr_max_steps: 50
 weight_decay: 0.1
 dataloader_nworkers: 4
 
 ## Other Config
 use_wandb: True
 use_compile: True
+datapath: data/edu_fineweb10B.hdf5
+ckptdir: data/ckpts/
